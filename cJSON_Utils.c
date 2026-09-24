@@ -1318,6 +1318,23 @@ CJSON_PUBLIC(void) cJSONUtils_SortObjectCaseSensitive(cJSON * const object)
     sort_object(object, true);
 }
 
+/* Move the contents of 'replacement' into the caller-visible node 'target'
+ * and free the old contents of 'target'. The address of 'target' is kept
+ * stable so that a caller holding the original pointer never ends up with a
+ * dangling pointer when merge_patch has to replace a non-object target. */
+static void merge_patch_adopt(cJSON *target, cJSON *replacement)
+{
+    cJSON old_target = *target;
+
+    *target = *replacement;
+    *replacement = old_target;
+    /* The old contents are now owned by the throwaway node; clear its list
+     * links so that freeing it cannot drag in unrelated nodes. */
+    replacement->next = NULL;
+    replacement->prev = NULL;
+    cJSON_Delete(replacement);
+}
+
 static cJSON *merge_patch(cJSON *target, const cJSON * const patch, const cJSON_bool case_sensitive)
 {
     cJSON *patch_child = NULL;
@@ -1329,14 +1346,37 @@ static cJSON *merge_patch(cJSON *target, const cJSON * const patch, const cJSON_
          * otherwise cJSON_Delete(target) would free the patch memory
          * and the subsequent cJSON_Duplicate would read freed memory. */
         cJSON *duplicate = cJSON_Duplicate(patch, 1);
-        cJSON_Delete(target);
-        return duplicate;
+        if (duplicate == NULL)
+        {
+            cJSON_Delete(target);
+            return NULL;
+        }
+        if (target == NULL)
+        {
+            return duplicate;
+        }
+        /* Reuse the caller's node instead of freeing it, so callers that
+         * still hold the original pointer don't read freed memory. */
+        merge_patch_adopt(target, duplicate);
+        return target;
     }
 
     if (!cJSON_IsObject(target))
     {
-        cJSON_Delete(target);
-        target = cJSON_CreateObject();
+        cJSON *new_target = cJSON_CreateObject();
+        if (new_target == NULL)
+        {
+            return NULL;
+        }
+        if (target == NULL)
+        {
+            target = new_target;
+        }
+        else
+        {
+            /* Reuse the caller's node so that its pointer stays valid. */
+            merge_patch_adopt(target, new_target);
+        }
     }
 
     patch_child = patch->child;
