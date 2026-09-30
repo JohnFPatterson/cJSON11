@@ -1,0 +1,15 @@
+---
+description: Rules for the cJSON C-to-Rust port while work is in progress
+alwaysApply: false
+---
+
+# cJSON C-to-Rust port
+
+- Keep original `cJSON.c` / `cJSON.h` in-tree as the behavioral spec. Do not patch C for Sonar findings.
+- All logic lives in `cjson-core` with `#![forbid(unsafe_code)]`.
+- `cjson-ffi` is the only crate with `unsafe`; every block needs `SAFETY:`.
+- Match C quirks (case folding, `%g` print, duplicate keys, error pointers) unless an approved `PE-NNN` or `CH-NNN` says otherwise.
+- Propose every exception row to the user before applying it.
+- Baseline first: pin oracle and fixtures before writing Rust behavior.
+- `cJSON_Utils` and fuzzing are out of scope; name them in `MIGRATION.md`.
+- Public-API Unity suites run against C and against `cjson-ffi`. White-box suites that call `static` internals run against C and are ported case-for-case to `cjson-core::internals`.

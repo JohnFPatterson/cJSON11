@@ -1,0 +1,44 @@
+{
+  "enabled": true,
+  "report_dir": "build/parity-gate",
+  "oracle_sources": [
+    "cJSON.c",
+    "cJSON.h"
+  ],
+  "build": ["make", "oracle", "rust-driver"],
+  "c_cmd": ["./build/oracle", "{input}"],
+  "rust_cmd": ["./target/release/cjson-driver", "{input}"],
+  "compare_stderr": false,
+  "per_run_timeout_s": 30,
+  "fixtures": [
+    "tests/inputs/test1",
+    "tests/inputs/test2",
+    "tests/inputs/test3",
+    "tests/inputs/test4",
+    "tests/inputs/test5",
+    "tests/inputs/test6",
+    "tests/inputs/test7",
+    "tests/inputs/test8",
+    "tests/inputs/test9",
+    "tests/inputs/test10",
+    "tests/inputs/test11"
+  ],
+  "exceptions_test": [
+    "cargo", "test", "-p", "cjson-core", "--test", "exceptions",
+    "--target-dir", "target", "--", "--list"
+  ],
+  "modules": {
+    "parse": {
+      "driver_args": ["--sections", "parse"],
+      "ready": false
+    },
+    "print": {
+      "driver_args": ["--sections", "print"],
+      "ready": false
+    },
+    "tree": {
+      "driver_args": ["--sections", "tree"],
+      "ready": false
+    }
+  }
+}
