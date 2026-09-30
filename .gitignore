@@ -8,6 +8,7 @@ test
 tags
 *.dylib*
 build/
+target/
 cJSON_test
 cJSON_test_utils
 libcjson.so.*
@@ -18,3 +19,5 @@ libcjson_utils.so.*
 cmake-build-debug
 *.lst
 *.lss
+parity-report.md
+parity-report.json

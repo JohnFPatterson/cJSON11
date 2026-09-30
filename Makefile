@@ -161,3 +161,63 @@ clean:
 	$(RM) $(CJSON_SHARED) $(CJSON_SHARED_VERSION) $(CJSON_SHARED_SO) $(CJSON_STATIC) #delete cJSON
 	$(RM) $(UTILS_SHARED) $(UTILS_SHARED_VERSION) $(UTILS_SHARED_SO) $(UTILS_STATIC) #delete cJSON_Utils
 	$(RM) $(CJSON_TEST)  #delete test
+
+# --- C-to-Rust port helpers -------------------------------------------------
+
+.PHONY: oracle rust-driver parity hook-trace c-unity ffi-unity export-check
+
+oracle: build/oracle
+
+build/oracle: tools/cjson-oracle.c cJSON.c cJSON.h
+	mkdir -p build
+	$(CC) -std=c89 -O2 -Wall -Werror -I. -o build/oracle.tmp tools/cjson-oracle.c cJSON.c $(LDLIBS)
+	mv -f build/oracle.tmp build/oracle
+
+rust-driver:
+	cargo build --release --target-dir target -p cjson-driver
+
+parity: oracle rust-driver
+	printf '%s' '{"status":"completed","loop_count":0,"workspace_roots":["'"$(CURDIR)"'"]}' \
+		| python3 tools/parity_gate.py --force
+
+hook-trace: build/hook-trace-c build/hook-trace-ffi
+	./build/hook-trace-c > build/hook-trace-c.out
+	./build/hook-trace-ffi > build/hook-trace-ffi.out
+	@diff -u build/hook-trace-c.out build/hook-trace-ffi.out || \
+		(echo "hook-trace diverged; see MIGRATION.md proposed CH-NNN (awaiting approval)"; exit 1)
+
+.PHONY: c-unity
+c-unity:
+	mkdir -p build/c-unity && cd build/c-unity && \
+		cmake ../.. -DENABLE_CJSON_UTILS=OFF -DENABLE_CJSON_TEST=ON && \
+		cmake --build . -j$$(nproc) && ctest --output-on-failure
+
+build/hook-trace-c: tools/hook-trace.c cJSON.c cJSON.h
+	mkdir -p build
+	# C99: snprintf (Sonar S5281); library sources remain C89 via $(CC).
+	gcc -std=c99 -O2 -Wall -Werror -I. -o $@ tools/hook-trace.c cJSON.c $(LDLIBS)
+
+build/hook-trace-ffi: tools/hook-trace.c target/release/libcjson_ffi.a cJSON.h
+	mkdir -p build
+	gcc -std=c99 -O2 -Wall -Werror -I. -o $@ tools/hook-trace.c \
+		target/release/libcjson_ffi.a $(LDLIBS) -lpthread -ldl
+
+export-check: rust-ffi
+	mkdir -p build
+	# Declarations only (skip #define CJSON_PUBLIC(...) macro lines).
+	grep -E '^CJSON_PUBLIC\(' cJSON.h \
+		| sed -E 's/^CJSON_PUBLIC\([^)]*\)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*).*/\1/' \
+		| sort -u > build/header-fns.txt
+	nm -g target/release/libcjson_ffi.a 2>/dev/null \
+		| awk 'NF>=3 && ($$2=="T" || $$2=="t"){print $$3}' \
+		| sed 's/^_//' | sort -u > build/ffi-exports.txt
+	@echo "header functions: $$(wc -l < build/header-fns.txt)"
+	@test "$$(wc -l < build/header-fns.txt)" -eq 78
+	@comm -23 build/header-fns.txt build/ffi-exports.txt > build/missing-exports.txt
+	@if [ -s build/missing-exports.txt ]; then \
+		echo "Missing FFI exports:"; cat build/missing-exports.txt; exit 1; \
+	fi
+	@echo "export-check: ok"
+
+rust-ffi:
+	cargo build --release --target-dir target -p cjson-ffi
