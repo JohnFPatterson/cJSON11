@@ -5,9 +5,19 @@
     "cJSON.c",
     "cJSON.h"
   ],
-  "build": ["make", "oracle", "rust-driver"],
-  "c_cmd": ["./build/oracle", "{input}"],
-  "rust_cmd": ["./target/release/cjson-driver", "{input}"],
+  "build": [
+    "make",
+    "oracle",
+    "rust-driver"
+  ],
+  "c_cmd": [
+    "./build/oracle",
+    "{input}"
+  ],
+  "rust_cmd": [
+    "./target/release/cjson-driver",
+    "{input}"
+  ],
   "compare_stderr": false,
   "per_run_timeout_s": 30,
   "fixtures": [
@@ -24,21 +34,38 @@
     "tests/inputs/test11"
   ],
   "exceptions_test": [
-    "cargo", "test", "-p", "cjson-core", "--test", "exceptions",
-    "--target-dir", "target", "--", "--list"
+    "cargo",
+    "test",
+    "-p",
+    "cjson-core",
+    "--test",
+    "exceptions",
+    "--target-dir",
+    "target",
+    "--",
+    "--list"
   ],
   "modules": {
     "parse": {
-      "driver_args": ["--sections", "parse"],
-      "ready": false
+      "driver_args": [
+        "--sections",
+        "parse"
+      ],
+      "ready": true
     },
     "print": {
-      "driver_args": ["--sections", "print"],
-      "ready": false
+      "driver_args": [
+        "--sections",
+        "print"
+      ],
+      "ready": true
     },
     "tree": {
-      "driver_args": ["--sections", "tree"],
-      "ready": false
+      "driver_args": [
+        "--sections",
+        "tree"
+      ],
+      "ready": true
     }
   }
 }
