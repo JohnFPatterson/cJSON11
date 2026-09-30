@@ -1,0 +1,9 @@
+[package]
+name = "cjson-cfmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Thin libc snprintf boundary for cJSON-compatible %%g formatting"
+
+[dependencies]
+libc = "0.2"

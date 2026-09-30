@@ -1,0 +1,11 @@
+[package]
+name = "cjson-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Safe Rust port of cJSON core logic (no unsafe)"
+
+[dependencies]
+cjson-cfmt = { path = "../cjson-cfmt" }
+
+[dev-dependencies]
