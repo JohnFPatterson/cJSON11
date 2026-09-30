@@ -1,0 +1,16 @@
+[package]
+name = "cjson-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "C ABI shim over cjson-core"
+
+[lib]
+name = "cjson_ffi"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+cjson-core = { path = "../cjson-core" }
+
+[lints.clippy]
+not_unsafe_ptr_arg_deref = "allow"
