@@ -194,11 +194,12 @@ c-unity:
 
 build/hook-trace-c: tools/hook-trace.c cJSON.c cJSON.h
 	mkdir -p build
-	$(CC) -std=c89 -O2 -Wall -Werror -I. -o $@ tools/hook-trace.c cJSON.c $(LDLIBS)
+	# C99: snprintf (Sonar S5281); library sources remain C89 via $(CC).
+	gcc -std=c99 -O2 -Wall -Werror -I. -o $@ tools/hook-trace.c cJSON.c $(LDLIBS)
 
 build/hook-trace-ffi: tools/hook-trace.c target/release/libcjson_ffi.a cJSON.h
 	mkdir -p build
-	$(CC) -std=c89 -O2 -Wall -Werror -I. -o $@ tools/hook-trace.c \
+	gcc -std=c99 -O2 -Wall -Werror -I. -o $@ tools/hook-trace.c \
 		target/release/libcjson_ffi.a $(LDLIBS) -lpthread -ldl
 
 export-check: rust-ffi

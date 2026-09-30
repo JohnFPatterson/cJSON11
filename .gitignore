@@ -9,7 +9,6 @@ tags
 *.dylib*
 build/
 target/
-Cargo.lock
 cJSON_test
 cJSON_test_utils
 libcjson.so.*

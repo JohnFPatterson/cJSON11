@@ -137,7 +137,7 @@ int main(void)
     for (i = 0; i < 8; i++)
     {
         char label[32];
-        sprintf(label, "fail_%d", i);
+        snprintf(label, sizeof(label), "fail_%d", i);
         run_case(label, i);
     }
     return 0;

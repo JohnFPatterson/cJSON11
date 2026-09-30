@@ -20,36 +20,55 @@ import time
 from pathlib import Path
 from typing import Any
 
+# Executables resolved via PATH (not under the repo) that the gate may invoke.
+_ALLOWED_PATH_BINS = frozenset({"make", "cargo", "python3", "python"})
+
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def sha256_file(path: Path) -> str:
-    return sha256_bytes(path.read_bytes())
+def resolve_under(root: Path, path: Path) -> Path:
+    """Resolve *path* and require the result to stay under *root*."""
+    root_r = root.resolve()
+    candidate = path if path.is_absolute() else root_r / path
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root_r)
+    except ValueError as exc:
+        raise SystemExit(f"path escapes workspace: {path}") from exc
+    return resolved
 
 
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+def sha256_file(path: Path, root: Path) -> str:
+    return sha256_bytes(resolve_under(root, path).read_bytes())
+
+
+def load_json(path: Path, root: Path) -> dict[str, Any]:
+    return json.loads(resolve_under(root, path).read_text(encoding="utf-8"))
 
 
 def find_repo_root(workspace: Path) -> Path:
-    cfg = workspace / ".cursor" / "parity.json"
+    raw = str(workspace)
+    if "\x00" in raw or ".." in Path(raw).parts:
+        raise SystemExit(f"refusing unsafe workspace root: {workspace}")
+    root = workspace.resolve()
+    cfg = root / ".cursor" / "parity.json"
     if cfg.is_file():
-        return workspace
+        return root
     raise SystemExit(f"no .cursor/parity.json under {workspace}")
 
 
 def state_path(repo: Path) -> Path:
-    digest = sha256_bytes(str(repo.resolve()).encode())[:16]
-    base = Path.home() / ".cursor" / "hooks" / "c-rust-parity" / "state"
+    """Keep gate state under the repo report dir (no user-controlled escape)."""
+    base = resolve_under(repo, Path("build/parity-gate"))
     base.mkdir(parents=True, exist_ok=True)
-    return base / f"{digest}.json"
+    return base / "state.json"
 
 
 def parse_exceptions(repo: Path) -> dict[str, str]:
     """Map fixture path -> test function name from PARITY_EXCEPTIONS.md."""
-    path = repo / "PARITY_EXCEPTIONS.md"
+    path = resolve_under(repo, Path("PARITY_EXCEPTIONS.md"))
     if not path.is_file():
         return {}
     out: dict[str, str] = {}
@@ -64,6 +83,8 @@ def parse_exceptions(repo: Path) -> dict[str, str]:
         fixture = cols[8]
         test = cols[7]
         if fixture and fixture != "-" and test and test != "-":
+            if ".." in Path(fixture).parts or Path(fixture).is_absolute():
+                continue
             out[fixture] = test
     return out
 
@@ -71,22 +92,24 @@ def parse_exceptions(repo: Path) -> dict[str, str]:
 def expand_fixtures(repo: Path, patterns: list[str]) -> list[Path]:
     files: list[Path] = []
     for pat in patterns:
+        if "\x00" in pat or Path(pat).is_absolute() or ".." in Path(pat).parts:
+            raise SystemExit(f"refusing unsafe fixture pattern: {pat}")
         if any(ch in pat for ch in "*?[]"):
             files.extend(sorted(repo.glob(pat)))
         else:
-            p = repo / pat
+            p = resolve_under(repo, Path(pat))
             if p.is_file():
                 files.append(p)
     # Drop .expected companions; fixtures are the input files.
     files = [f for f in files if not f.name.endswith(".expected") and f.is_file()]
-    # Stable unique
+    # Stable unique, confined under repo
     seen = set()
     unique: list[Path] = []
     for f in files:
-        key = f.resolve()
+        key = resolve_under(repo, f)
         if key not in seen:
             seen.add(key)
-            unique.append(f)
+            unique.append(key)
     return unique
 
 
@@ -96,21 +119,34 @@ def run_cmd(
     timeout: float,
     input_path: Path | None = None,
 ) -> tuple[int, bytes, bytes]:
-    cmd = []
+    repo = cwd.resolve()
+    cmd: list[str] = []
     for a in argv:
+        if not isinstance(a, str) or "\x00" in a:
+            raise SystemExit("refusing unsafe command argument")
         if a == "{input}":
             if input_path is None:
                 raise SystemExit("command uses {input} but no fixture given")
-            cmd.append(str(input_path))
+            cmd.append(str(resolve_under(repo, input_path)))
         else:
             cmd.append(a)
+    if not cmd:
+        raise SystemExit("empty command")
+    prog = cmd[0]
+    prog_path = Path(prog)
+    if prog_path.is_absolute() or "/" in prog or prog.startswith("."):
+        resolve_under(repo, prog_path)
+    elif prog not in _ALLOWED_PATH_BINS:
+        raise SystemExit(f"disallowed executable: {prog}")
     try:
+        # shell=False: argv is never passed through a shell.
         proc = subprocess.run(
             cmd,
-            cwd=str(cwd),
+            cwd=str(repo),
             capture_output=True,
             timeout=timeout,
             check=False,
+            shell=False,
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as exc:
@@ -136,20 +172,23 @@ def pin_or_check(
     first_fixtures = not fixture_pins
 
     for rel in oracle_sources:
-        path = repo / rel
+        if ".." in Path(rel).parts or Path(rel).is_absolute():
+            errors.append(f"unsafe oracle source path: {rel}")
+            continue
+        path = resolve_under(repo, Path(rel))
         if not path.is_file():
             errors.append(f"missing oracle source: {rel}")
             continue
-        digest = sha256_file(path)
+        digest = sha256_file(path, repo)
         if rel not in oracle_pins:
             oracle_pins[rel] = digest
         elif oracle_pins[rel] != digest:
             errors.append(f"pinned oracle source changed: {rel}")
 
-    fixture_rels = [str(f.relative_to(repo)) for f in fixtures]
+    fixture_rels = [str(f.relative_to(repo.resolve())) for f in fixtures]
     for rel in fixture_rels:
-        path = repo / rel
-        digest = sha256_file(path)
+        path = resolve_under(repo, Path(rel))
+        digest = sha256_file(path, repo)
         if rel not in fixture_pins:
             fixture_pins[rel] = digest
         elif fixture_pins[rel] != digest:
@@ -157,7 +196,10 @@ def pin_or_check(
 
     # Deleted pinned fixtures fail
     for rel in list(fixture_pins):
-        if not (repo / rel).is_file():
+        if ".." in Path(rel).parts or Path(rel).is_absolute():
+            errors.append(f"unsafe pinned fixture path: {rel}")
+            continue
+        if not resolve_under(repo, Path(rel)).is_file():
             errors.append(f"pinned fixture deleted: {rel}")
 
     for name, mod in modules_cfg.items():
@@ -210,7 +252,7 @@ def compare_fixture(
     r_cmd = list(cfg["rust_cmd"]) + driver_args
     c_rc, c_out, c_err = run_cmd(c_cmd, repo, timeout, fixture)
     r_rc, r_out, r_err = run_cmd(r_cmd, repo, timeout, fixture)
-    rel = str(fixture.relative_to(repo))
+    rel = str(resolve_under(repo, fixture).relative_to(repo.resolve()))
     compare_stderr = bool(cfg.get("compare_stderr", False))
     same = c_rc == r_rc and c_out == r_out and (not compare_stderr or c_err == r_err)
     result: dict[str, Any] = {
@@ -259,7 +301,10 @@ def write_report(
     report: dict[str, Any],
     module_mode: bool,
 ) -> None:
-    report_dir = repo / cfg.get("report_dir", "build/parity-gate")
+    report_rel = Path(cfg.get("report_dir", "build/parity-gate"))
+    if report_rel.is_absolute() or ".." in report_rel.parts:
+        raise SystemExit(f"refusing unsafe report_dir: {report_rel}")
+    report_dir = resolve_under(repo, report_rel)
     report_dir.mkdir(parents=True, exist_ok=True)
     stem = "parity-report.modules" if module_mode else "parity-report"
     (report_dir / f"{stem}.json").write_text(
@@ -306,8 +351,10 @@ def main() -> int:
     except json.JSONDecodeError:
         payload = {}
     roots = payload.get("workspace_roots") or [os.getcwd()]
+    if not isinstance(roots, list) or not roots or not isinstance(roots[0], str):
+        raise SystemExit("workspace_roots must be a non-empty list of strings")
     repo = find_repo_root(Path(roots[0]))
-    cfg = load_json(repo / ".cursor" / "parity.json")
+    cfg = load_json(repo / ".cursor" / "parity.json", repo)
     if not cfg.get("enabled", True):
         print(json.dumps({"status": "skipped", "reason": cfg.get("reason", "")}))
         return 0
@@ -315,7 +362,7 @@ def main() -> int:
     state_file = state_path(repo)
     state: dict[str, Any] = {}
     if state_file.is_file():
-        state = load_json(state_file)
+        state = load_json(state_file, repo)
 
     modules_cfg = cfg.get("modules") or {}
     exceptions = parse_exceptions(repo)

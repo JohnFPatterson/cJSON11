@@ -156,7 +156,13 @@ int main(int argc, char **argv)
     {
         if (strcmp(argv[i], "--sections") == 0)
         {
-            if (i + 1 >= argc || !parse_sections(argv[++i], &sections))
+            if (i + 1 >= argc)
+            {
+                usage(argv[0]);
+                return 2;
+            }
+            i++;
+            if (!parse_sections(argv[i], &sections))
             {
                 usage(argv[0]);
                 return 2;
